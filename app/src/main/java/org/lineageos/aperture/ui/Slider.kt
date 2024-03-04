@@ -101,13 +101,11 @@ abstract class Slider @JvmOverloads constructor(
         }
     }
 
-    override fun onDraw(canvas: Canvas?) {
+    override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        canvas?.let {
-            drawTrack(it)
-            drawThumb(it)
-        }
+        drawTrack(canvas)
+        drawThumb(canvas)
     }
 
     abstract fun track(): RectF
