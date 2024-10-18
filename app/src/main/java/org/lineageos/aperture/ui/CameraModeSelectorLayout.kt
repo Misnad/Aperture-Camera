@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2022-2023 The LineageOS Project
+ * SPDX-FileCopyrightText: 2022-2024 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,7 @@ import android.util.AttributeSet
 import android.view.LayoutInflater
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.core.view.doOnLayout
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
@@ -25,6 +26,7 @@ import org.lineageos.aperture.utils.TimeUtils
 import org.lineageos.aperture.viewmodels.CameraViewModel
 import kotlin.reflect.cast
 
+@ExperimentalCamera2Interop
 class CameraModeSelectorLayout @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : FrameLayout(context, attrs) {
@@ -124,6 +126,7 @@ class CameraModeSelectorLayout @JvmOverloads constructor(
         val inSingleCaptureMode = cameraViewModel?.inSingleCaptureMode?.value ?: return
         val cameraState = cameraViewModel?.cameraState?.value ?: return
 
+        cameraModeHighlightButton.isInvisible = cameraState.isRecordingVideo || inSingleCaptureMode
         cameraToButton.forEach {
             it.value.isInvisible = cameraState.isRecordingVideo || inSingleCaptureMode
         }

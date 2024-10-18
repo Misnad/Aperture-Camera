@@ -76,7 +76,6 @@ import androidx.core.location.LocationManagerCompat
 import androidx.core.location.LocationRequestCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowCompat.getInsetsController
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.children
@@ -108,8 +107,9 @@ import org.lineageos.aperture.models.DistortionCorrectionMode
 import org.lineageos.aperture.models.EdgeMode
 import org.lineageos.aperture.models.FlashMode
 import org.lineageos.aperture.models.FrameRate
-import org.lineageos.aperture.models.GestureActions
+import org.lineageos.aperture.models.GestureAction
 import org.lineageos.aperture.models.GridMode
+import org.lineageos.aperture.models.HardwareKey
 import org.lineageos.aperture.models.HotPixelMode
 import org.lineageos.aperture.models.MediaType
 import org.lineageos.aperture.models.NoiseReductionMode
@@ -152,7 +152,7 @@ import androidx.camera.core.CameraState as CameraXCameraState
 
 @androidx.camera.camera2.interop.ExperimentalCamera2Interop
 @androidx.camera.core.ExperimentalZeroShutterLag
-open class CameraActivity : AppCompatActivity() {
+open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
     // View models
     private val model: CameraViewModel by viewModels()
 
@@ -289,15 +289,26 @@ open class CameraActivity : AppCompatActivity() {
         })
     }
     private val zoomGestureDetector by lazy {
-        ZoomGestureDetector(this) { type, detector ->
-            if (type == ZoomGestureDetector.ZOOM_GESTURE_MOVE) {
-                cameraController.onPinchToZoom(detector.scaleFactor)
-                handler.removeMessages(MSG_ON_PINCH_TO_ZOOM)
-                handler.sendMessageDelayed(handler.obtainMessage(MSG_ON_PINCH_TO_ZOOM), 500)
+        ZoomGestureDetector(this) {
+            when (it) {
+                is ZoomGestureDetector.ZoomEvent.Begin -> {
+                    zoomGestureDetectorIsInProgress = true
+                }
+
+                is ZoomGestureDetector.ZoomEvent.Move -> {
+                    cameraController.onPinchToZoom(it.incrementalScaleFactor)
+                    handler.removeMessages(MSG_ON_PINCH_TO_ZOOM)
+                    handler.sendMessageDelayed(handler.obtainMessage(MSG_ON_PINCH_TO_ZOOM), 500)
+                }
+
+                is ZoomGestureDetector.ZoomEvent.End -> {
+                    zoomGestureDetectorIsInProgress = false
+                }
             }
             true
         }
     }
+    private var zoomGestureDetectorIsInProgress = false
 
     private val handler = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
@@ -537,11 +548,14 @@ open class CameraActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        hideStatusBars()
-
-        setContentView(R.layout.activity_camera)
-
+        // Setup edge-to-edge
         WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // Hide the status bars
+        window.updateBarsVisibility(
+            WindowInsetsControllerCompat.BEHAVIOR_DEFAULT,
+            statusBars = false,
+        )
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1
             && keyguardManager.isKeyguardLocked
@@ -694,7 +708,7 @@ open class CameraActivity : AppCompatActivity() {
 
         // Observe manual focus
         viewFinder.setOnTouchListener { _, event ->
-            if (zoomGestureDetector.onTouchEvent(event) && zoomGestureDetector.isInProgress) {
+            if (zoomGestureDetector.onTouchEvent(event) && zoomGestureDetectorIsInProgress) {
                 return@setOnTouchListener true
             }
             return@setOnTouchListener gestureDetector.onTouchEvent(event)
@@ -1174,98 +1188,14 @@ open class CameraActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        return if (capturePreviewLayout.isVisible) {
-            super.onKeyDown(keyCode, event)
-        } else when (keyCode) {
-            KeyEvent.KEYCODE_FOCUS -> {
-                if (event?.repeatCount == 1) {
-                    viewFinderTouchEvent = null
-                    viewFinder.performClick()
-                }
-                true
-            }
-
-            KeyEvent.KEYCODE_CAMERA -> {
-                if (cameraMode == CameraMode.VIDEO && shutterButton.isEnabled &&
-                    event?.repeatCount == 1
-                ) {
-                    shutterButton.performClick()
-                }
-                true
-            }
-
-            KeyEvent.KEYCODE_VOLUME_UP,
-            KeyEvent.KEYCODE_VOLUME_DOWN -> when (sharedPreferences.volumeButtonsAction) {
-                GestureActions.SHUTTER -> {
-                    if (cameraMode == CameraMode.VIDEO && shutterButton.isEnabled &&
-                        event?.repeatCount == 1
-                    ) {
-                        shutterButton.performClick()
-                    }
-                    true
-                }
-
-                GestureActions.ZOOM -> {
-                    when (keyCode) {
-                        KeyEvent.KEYCODE_VOLUME_UP -> zoomIn()
-                        KeyEvent.KEYCODE_VOLUME_DOWN -> zoomOut()
-                    }
-                    true
-                }
-
-                GestureActions.VOLUME -> {
-                    super.onKeyDown(keyCode, event)
-                }
-
-                GestureActions.NOTHING -> {
-                    // Do nothing
-                    true
-                }
-            }
-
-            else -> super.onKeyDown(keyCode, event)
-        }
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?) = when (capturePreviewLayout.isVisible) {
+        true -> super.onKeyDown(keyCode, event)
+        false -> handleHardwareKeyDown(keyCode, event) ?: super.onKeyDown(keyCode, event)
     }
 
-    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
-        return if (capturePreviewLayout.isVisible) {
-            super.onKeyUp(keyCode, event)
-        } else when (keyCode) {
-            KeyEvent.KEYCODE_CAMERA -> {
-                if (cameraMode != CameraMode.QR && shutterButton.isEnabled) {
-                    shutterButton.performClick()
-                }
-                true
-            }
-
-            KeyEvent.KEYCODE_VOLUME_UP,
-            KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                when (sharedPreferences.volumeButtonsAction) {
-                    GestureActions.SHUTTER -> {
-                        if (cameraMode != CameraMode.QR && shutterButton.isEnabled) {
-                            shutterButton.performClick()
-                        }
-                        true
-                    }
-
-                    GestureActions.ZOOM -> {
-                        true
-                    }
-
-                    GestureActions.VOLUME -> {
-                        super.onKeyDown(keyCode, event)
-                    }
-
-                    GestureActions.NOTHING -> {
-                        // Do nothing
-                        true
-                    }
-                }
-            }
-
-            else -> super.onKeyUp(keyCode, event)
-        }
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?) = when (capturePreviewLayout.isVisible) {
+        true -> super.onKeyUp(keyCode, event)
+        false -> handleHardwareKeyUp(keyCode, event) ?: super.onKeyUp(keyCode, event)
     }
 
     /**
@@ -1503,6 +1433,11 @@ open class CameraActivity : AppCompatActivity() {
         // Fallback to ExtensionMode.NONE if necessary
         if (!camera.supportsExtensionMode(photoEffect)) {
             photoEffect = ExtensionMode.NONE
+        }
+
+        // Fallback to FlashMode.OFF if necessary
+        if (!camera.supportedFlashModes.contains(flashMode)) {
+            changeFlashMode(FlashMode.OFF)
         }
 
         // Initialize the use case we want and set its properties
@@ -2371,15 +2306,6 @@ open class CameraActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
-    private fun hideStatusBars() {
-        val windowInsetsController = getInsetsController(window, window.decorView)
-        // Configure the behavior of the hidden system bars
-        windowInsetsController.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        // Hide the status bar
-        windowInsetsController.hide(WindowInsetsCompat.Type.statusBars())
-    }
-
     private fun startTimerAndRun(runnable: () -> Unit) {
         // Allow forcing timer if requested by the assistant
         val timerModeSeconds =
@@ -2528,6 +2454,130 @@ open class CameraActivity : AppCompatActivity() {
             secureMediaUris.clear()
         } else {
             secureMediaUris.removeIf { !MediaStoreUtils.fileExists(this, it) }
+        }
+    }
+
+    private fun handleHardwareKeyDown(
+        keyCode: Int, event: KeyEvent?
+    ) = HardwareKey.match(keyCode)?.let { (hardwareKey, tempIncrease) ->
+        val increase = when (sharedPreferences.getHardwareKeyInvert(hardwareKey)) {
+            true -> !tempIncrease
+            false -> tempIncrease
+        }
+
+        val gestureAction = sharedPreferences.getHardwareKeyAction(hardwareKey)
+
+        if (gestureAction.isTwoWayAction && !hardwareKey.isTwoWayKey) {
+            Log.wtf(
+                LOG_TAG,
+                "${gestureAction.name} requires two-way key but ${hardwareKey.name} is not"
+            )
+            return@let true
+        }
+
+        when (gestureAction) {
+            GestureAction.SHUTTER -> {
+                if (cameraMode == CameraMode.VIDEO && shutterButton.isEnabled &&
+                    event?.repeatCount == 0
+                ) {
+                    shutterButton.performClick()
+                }
+                true
+            }
+
+            GestureAction.FOCUS -> {
+                if (event?.repeatCount == 0) {
+                    viewFinderTouchEvent = null
+                    viewFinder.performClick()
+                }
+                true
+            }
+
+            GestureAction.MIC_MUTE -> {
+                if (cameraMode == CameraMode.VIDEO && micButton.isEnabled &&
+                    event?.repeatCount == 0
+                ) {
+                    toggleMicrophoneMode()
+                }
+                true
+            }
+
+            GestureAction.ZOOM -> {
+                when (increase) {
+                    true -> zoomIn()
+                    false -> zoomOut()
+                }
+                true
+            }
+
+            GestureAction.DEFAULT -> {
+                if (hardwareKey.supportsDefault) {
+                    super.onKeyDown(keyCode, event)
+                } else {
+                    Log.wtf(
+                        LOG_TAG,
+                        "Got GestureAction.DEFAULT for ${hardwareKey.name} which doesn't support it"
+                    )
+                    true
+                }
+            }
+
+            GestureAction.NOTHING -> {
+                // Do nothing
+                true
+            }
+        }
+    }
+
+    private fun handleHardwareKeyUp(
+        keyCode: Int, event: KeyEvent?
+    ) = HardwareKey.match(keyCode)?.let { (hardwareKey, _) ->
+        val gestureAction = sharedPreferences.getHardwareKeyAction(hardwareKey)
+
+        if (gestureAction.isTwoWayAction && !hardwareKey.isTwoWayKey) {
+            Log.wtf(
+                LOG_TAG,
+                "${gestureAction.name} requires two-way key but ${hardwareKey.name} is not"
+            )
+            return@let true
+        }
+
+        when (sharedPreferences.getHardwareKeyAction(hardwareKey)) {
+            GestureAction.SHUTTER -> {
+                if (cameraMode != CameraMode.QR && shutterButton.isEnabled) {
+                    shutterButton.performClick()
+                }
+                true
+            }
+
+            GestureAction.FOCUS -> {
+                true
+            }
+
+            GestureAction.MIC_MUTE -> {
+                true
+            }
+
+            GestureAction.ZOOM -> {
+                true
+            }
+
+            GestureAction.DEFAULT -> {
+                if (hardwareKey.supportsDefault) {
+                    super.onKeyDown(keyCode, event)
+                } else {
+                    Log.wtf(
+                        LOG_TAG,
+                        "Got GestureAction.DEFAULT for ${hardwareKey.name} which doesn't support it"
+                    )
+                    true
+                }
+            }
+
+            GestureAction.NOTHING -> {
+                // Do nothing
+                true
+            }
         }
     }
 
